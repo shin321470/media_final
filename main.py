@@ -27,7 +27,8 @@ PLAYER_SPEED = 3
 CHAIN_MAX_LENGTH = 400
 CHAIN_ITERATIONS = 5
 REVIVAL_RADIUS = CHAIN_MAX_LENGTH  # 復活有效半徑，與鎖鏈長度相同
-REVIVE_KEY = pygame.K_f  # 設定復活按鍵為 'F'
+REVIVE_KEYP1 = pygame.K_f  # 設定復活按鍵為 'F'
+REVIVE_KEYP2 = pygame.K_PERIOD
 
 # 遊戲狀態
 STATE_PLAYING = 0
@@ -341,7 +342,7 @@ def draw_game_state_messages():
 
         # 提示如何復活
         if (player1.is_alive and not player2.is_alive) or (player2.is_alive and not player1.is_alive):
-            revive_hint = font_tiny.render("靠近死亡位置並按住 F 鍵以復活隊友", True, REVIVE_PROMPT_COLOR)
+            revive_hint = font_tiny.render("靠近死亡位置並按住 F 鍵或 . 以復活隊友", True, REVIVE_PROMPT_COLOR)
             screen.blit(revive_hint, (SCREEN_WIDTH // 2 - revive_hint.get_width() // 2, 10))
 
 
@@ -358,7 +359,8 @@ while running:
                 current_level_index = 0
                 load_level(current_level_index)
 
-            # 復活鍵處理
+            # 復活鍵處理(立即復活，暫時不用，取消才會有按住復活5/22)
+            '''
             if event.key == REVIVE_KEY and game_state == STATE_PLAYING:
                 if player1.is_alive and not player2.is_alive:
                     if player1.pos.distance_to(player2.death_pos) <= REVIVAL_RADIUS:
@@ -366,6 +368,7 @@ while running:
                 elif player2.is_alive and not player1.is_alive:
                     if player2.pos.distance_to(player1.death_pos) <= REVIVAL_RADIUS:
                         player1.revive()
+            '''
 
     # --- 更新 ---
     if game_state == STATE_PLAYING:
@@ -403,6 +406,7 @@ while running:
                     player2.pos += delta * diff_factor  # player2 被拉向 player1.death_pos
                     player2.rect.center = player2.pos
 
+        #----是否過關---
         goal1.update_status(player1)
         goal2.update_status(player2)
 
@@ -457,7 +461,7 @@ while running:
         # 判斷是否有一人生一人死且在範圍內
         if player1.is_alive and not player2.is_alive and player2.death_pos:
             if player1.pos.distance_to(player2.death_pos) <= REVIVAL_RADIUS:
-                if keys[REVIVE_KEY]:
+                if keys[REVIVE_KEYP1]:
                     revive_target = 1
                     revive_progress += dt
                 else:
@@ -468,7 +472,7 @@ while running:
                 revive_target = None
         elif player2.is_alive and not player1.is_alive and player1.death_pos:
             if player2.pos.distance_to(player1.death_pos) <= REVIVAL_RADIUS:
-                if keys[REVIVE_KEY]:
+                if keys[REVIVE_KEYP2]:
                     revive_target = 0
                     revive_progress += dt
                 else:
@@ -492,6 +496,7 @@ while running:
 
     # 顯示復活進度
     if revive_target is not None:
+        print("!!復活進度:", revive_progress)
         revive_percentage = int((revive_progress / REVIVE_HOLD_TIME) * 100)
         revive_text = font_tiny.render(f"復活進度: {revive_percentage}%", True, REVIVE_PROMPT_COLOR)
         screen.blit(revive_text, (10, SCREEN_HEIGHT - 30))
