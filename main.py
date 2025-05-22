@@ -303,7 +303,6 @@ def load_level(level_idx):
 
     game_state = STATE_PLAYING
 
-
 # --- 主遊戲迴圈 ---
 game_state = STATE_PLAYING
 load_level(current_level_index)
