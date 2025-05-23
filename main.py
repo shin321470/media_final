@@ -101,42 +101,66 @@ class Player(pygame.sprite.Sprite):
         self.dead_color = dead_color
         self.control_keys = control_keys
         self.player_id = player_id
+        self.facing_left = False
 
-        self.image = pygame.Surface([PLAYER_RADIUS * 2, PLAYER_RADIUS * 2], pygame.SRCALPHA)
+        # 載入動畫圖片
+        original_frames = [
+            pygame.image.load("walk1.png").convert_alpha(),
+            pygame.image.load("walk2.png").convert_alpha()
+        ]
+        self.walk_frames = [
+            pygame.transform.smoothscale(frame, (PLAYER_RADIUS * 3, PLAYER_RADIUS * 3))
+            for frame in original_frames
+        ]
+
+        # 死亡狀態的圖片（黯淡版本）
+        self.dead_frames = []
+        for frame in self.walk_frames:
+            dead_frame = frame.copy()
+
+            # 方法1：使用 set_alpha 讓圖片半透明
+            dead_frame.set_alpha(100)  # 100 是透明度，可以調整
+
+            # 方法2：如果想要灰色效果，可以用这个替代上面的 set_alpha
+            # dead_frame = self._make_grayscale(dead_frame)
+            # dead_frame.set_alpha(150)  # 灰色 + 半透明
+
+            self.dead_frames.append(dead_frame)
+
+        self.current_frame = 0
+        self.frame_timer = 0
+        self.frame_interval = 0.2  # 每幀的時間間隔
+
+        # 初始化圖片和矩形
+        self.image = self.walk_frames[0]
         self.rect = self.image.get_rect(center=self.pos)
 
         self.is_alive = True
         self.death_pos = None
-        self._update_appearance()
 
-    #--- 玩家外觀(死掉或活著) ---
-    def _update_appearance(self):
-        self.image.fill((0, 0, 0, 0))
-        color_to_draw = self.alive_color if self.is_alive else self.dead_color
-        pygame.draw.circle(self.image, color_to_draw, (PLAYER_RADIUS, PLAYER_RADIUS), PLAYER_RADIUS)
-
-    #--- 玩家重置(回到起始狀態) ---
     def reset(self):
         self.pos = pygame.math.Vector2(self.start_pos.x, self.start_pos.y)
         self.is_alive = True
         self.death_pos = None
-        self._update_appearance()
-        self.rect.center = self.pos
+        self.image = self.walk_frames[0]
+        self.rect = self.image.get_rect(center=self.pos)
 
-    #--- 玩家復活 ---
     def revive(self):
         self.is_alive = True
         if self.death_pos:
             self.pos = pygame.math.Vector2(self.death_pos.x, self.death_pos.y)
         self.rect.center = self.pos
-        self._update_appearance()
+        self.image = self.walk_frames[0]
 
-    #--- 玩家移動判斷 ---
     def update_movement(self, laser_walls, coop_boxes=None):
+        # 更新玩家位置
         if not self.is_alive:
             if self.death_pos:
                 self.pos = self.death_pos
                 self.rect.center = self.death_pos
+
+            # 如果玩家死亡，則使用死亡狀態的圖片
+            self._update_dead_image()
             return
 
         keys = pygame.key.get_pressed()
@@ -145,16 +169,20 @@ class Player(pygame.sprite.Sprite):
         if keys[self.control_keys['down']]: movement_vector.y = 1
         if keys[self.control_keys['left']]: movement_vector.x = -1
         if keys[self.control_keys['right']]: movement_vector.x = 1
-        if movement_vector.length_squared() > 0:
+
+        is_moving = movement_vector.length_squared() > 0
+
+        if is_moving:
             movement_vector.normalize_ip()
             movement_vector *= PLAYER_SPEED
 
         tentative_pos = self.pos + movement_vector
 
-        # 碰撞檢查（雷射牆）
+        # 碰撞檢查
         temp_rect_x = self.rect.copy()
         temp_rect_x.centerx = tentative_pos.x
         hit_laser_x = any(temp_rect_x.colliderect(lw.rect) for lw in laser_walls)
+
         temp_rect_y = self.rect.copy()
         temp_rect_y.centery = tentative_pos.y
         hit_laser_y = any(temp_rect_y.colliderect(lw.rect) for lw in laser_walls)
@@ -163,18 +191,16 @@ class Player(pygame.sprite.Sprite):
             self.is_alive = False
             self.death_pos = self.pos
             self.pos = self.death_pos
-            self._update_appearance()
-            self.rect.center = self.pos
+            # 立即更新死亡狀態的圖片
+            self._update_dead_image()
+            self.rect = self.image.get_rect(center=self.pos)
             return
 
-        #---避免人走進據箱子--
-        # 檢查箱子碰撞（X方向）
+        # 箱子碰撞
         if coop_boxes:
             for box in coop_boxes:
                 if temp_rect_x.colliderect(box.rect):
                     movement_vector.x = 0
-        # 檢查箱子碰撞（Y方向）
-        if coop_boxes:
             for box in coop_boxes:
                 if temp_rect_y.colliderect(box.rect):
                     movement_vector.y = 0
@@ -184,9 +210,68 @@ class Player(pygame.sprite.Sprite):
         self.pos.x = max(PLAYER_RADIUS, min(self.pos.x, SCREEN_WIDTH - PLAYER_RADIUS))
         self.pos.y = max(PLAYER_RADIUS, min(self.pos.y, SCREEN_HEIGHT - PLAYER_RADIUS))
         self.rect.center = self.pos
-    #--- 繪製玩家 ---
+
+        # 更新復活後圖片
+        self._update_alive_image(is_moving)
+
+    def _update_alive_image(self, is_moving):
+        """更新存活狀態的圖片"""
+        # 使用存活狀態的圖片
+        keys = pygame.key.get_pressed()
+        if keys[self.control_keys['left']]:
+            self.facing_left = True
+        elif keys[self.control_keys['right']]:
+            self.facing_left = False
+
+        # 更新動畫幀
+        if is_moving:
+            self.frame_timer += 1 / FPS
+            if self.frame_timer >= self.frame_interval:
+                self.current_frame = (self.current_frame + 1) % len(self.walk_frames)
+                self.frame_timer = 0
+            frame = self.walk_frames[self.current_frame]
+        else:
+            frame = self.walk_frames[0]
+
+        # 根據方向決定是否翻轉圖片
+        if self.facing_left:
+            frame = pygame.transform.flip(frame, True, False)  # 水平翻转
+
+        self.image = frame
+
+    def _update_dead_image(self):
+        """更新死亡狀態的圖片"""
+        # 使用死亡狀態的圖片
+        frame = self.dead_frames[0]  # 使用第一幀作為死亡狀態的圖片
+
+        # 根據方向決定是否翻轉圖片
+        if self.facing_left:
+            frame = pygame.transform.flip(frame, True, False)
+
+        self.image = frame
+
     def draw(self, surface):
         surface.blit(self.image, self.rect)
+
+    def _make_grayscale(self, surface):
+        """將圖片轉換為灰度"""
+        # 創建一個新的灰度圖片
+        grayscale_surface = surface.copy()
+
+        # 獲取像素數組
+        arr = pygame.surfarray.pixels3d(grayscale_surface)
+
+        # 計算灰度值
+        gray = (arr[:, :, 0] * 0.299 + arr[:, :, 1] * 0.587 + arr[:, :, 2] * 0.114).astype(arr.dtype)
+
+        # 將灰度值應用到所有通道
+        arr[:, :, 0] = gray
+        arr[:, :, 1] = gray
+        arr[:, :, 2] = gray
+
+        del arr  # 釋放像素數組
+        return grayscale_surface
+
 
 # --- 牆壁類別 (雷射牆壁) ---
 class LaserWall(pygame.sprite.Sprite):
@@ -510,10 +595,32 @@ while running:
             revive_progress = 0
             revive_target = None
     # 繪製復活進度條
+    # --- 繪製復活進度圈 ---
     if revive_target is not None:
-        revive_percentage = int((revive_progress / REVIVE_HOLD_TIME) * 100)
-        revive_text = font_tiny.render(f"復活進度: {revive_percentage}%", True, REVIVE_PROMPT_COLOR)
-        screen.blit(revive_text, (10, SCREEN_HEIGHT - 30))
+        percentage = min(revive_progress / REVIVE_HOLD_TIME, 1.0)
+        angle = percentage * 360
+
+        # 找到死亡角色的位置
+        if revive_target == 0 and player1.death_pos:
+            center = player1.death_pos
+        elif revive_target == 1 and player2.death_pos:
+            center = player2.death_pos
+        else:
+            center = None
+
+        if center:
+            radius = 20
+            rect = pygame.Rect(0, 0, radius * 2, radius * 2)
+            rect.center = (int(center.x), int(center.y - 40))  # 圓圈畫在角色上方一點
+
+            # 畫背景圓圈
+            pygame.draw.circle(screen, (80, 80, 80), rect.center, radius, 2)
+
+            # 畫復活進度（弧線）
+            start_angle = -math.pi / 2  # 從上方開始畫
+            end_angle = start_angle + percentage * 2 * math.pi
+            pygame.draw.arc(screen, REVIVE_PROMPT_COLOR, rect, start_angle, end_angle, 4)
+
     #畫面展示
     pygame.display.flip()
 
