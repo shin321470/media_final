@@ -37,6 +37,9 @@ COOP_BOX_SIZE = 40
 COOP_BOX_SPEED = 2
 COOP_BOX_PUSH_RADIUS = 50  # 玩家距離箱子多少以內才可推
 
+# 地刺參數
+SAFE_COLOR = (220, 220, 220)  # 縮回(安全) 淺灰色
+DANGER_COLOR = (220, 40, 40)  # 伸出(危險) 紅色
 
 # 遊戲狀態
 STATE_PLAYING = 0
@@ -49,6 +52,11 @@ pygame.init()
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("雙人合作遊戲 Demo - 雷射關卡與復活系統")
 clock = pygame.time.Clock()
+
+#圖片載入
+box_img = pygame.image.load("box.png").convert_alpha()
+spike_trap_img_out = pygame.image.load("spike_trap_out.png").convert_alpha()
+spike_trap_img_in = pygame.image.load("spike_trap_in.png").convert_alpha()
 
 # 加載支持中文的字體
 try:
@@ -152,7 +160,7 @@ class Player(pygame.sprite.Sprite):
         self.rect.center = self.pos
         self.image = self.walk_frames[0]
 
-    def update_movement(self, laser_walls, coop_boxes=None):
+    def update_movement(self, laser_walls, coop_boxes=None,spike_trap_group=None):
         # 更新玩家位置
         if not self.is_alive:
             if self.death_pos:
@@ -204,6 +212,15 @@ class Player(pygame.sprite.Sprite):
             for box in coop_boxes:
                 if temp_rect_y.colliderect(box.rect):
                     movement_vector.y = 0
+        #地刺碰撞
+        if spike_trap_group:
+            for spike in spike_trap_group:
+                if spike.is_dangerous() and self.rect.colliderect(spike.rect) and self.is_alive:
+                    self.is_alive = False
+                    self.death_pos = self.pos
+                    self._update_dead_image()
+                    self.rect = self.image.get_rect(center=self.pos)
+                    return  # 死掉就直接跳出
 
         # 更新位置
         self.pos += movement_vector
@@ -305,28 +322,80 @@ class Goal(pygame.sprite.Sprite):
 
 # --- 協力推箱子類別 ---
 class CoopBox(pygame.sprite.Sprite):
-    def __init__(self, x, y):
+    def __init__(self, x, y, img=None):
         super().__init__()
-        self.image = pygame.Surface([COOP_BOX_SIZE, COOP_BOX_SIZE])
-        self.image.fill(COOP_BOX_COLOR)
-        self.rect = self.image.get_rect(center=(x, y))
+        # 碰撞體積尺寸（例如 40）
+        self.collision_size = COOP_BOX_SIZE  # 例如 40
+        # 圖片顯示尺寸（例如 80）
+        self.display_size = 60  # 你想要的更大尺寸
+
+        # 碰撞體積
+        self.rect = pygame.Rect(0, 0, self.collision_size, self.collision_size)
+        self.rect.center = (x, y)
         self.pos = pygame.math.Vector2(x, y)
 
-    #---箱子推動---
+        # 繪圖用圖片
+        if img:
+            self.image = pygame.transform.scale(img, (self.display_size, self.display_size))
+        else:
+            self.image = pygame.Surface([self.display_size, self.display_size])
+            self.image.fill(COOP_BOX_COLOR)
+
     def move(self, direction, obstacles):
         tentative_pos = self.pos + direction * COOP_BOX_SPEED
         test_rect = self.rect.copy()
         test_rect.center = tentative_pos
         for obs in obstacles:
             if test_rect.colliderect(obs.rect):
-                return  # 被擋住不動
-        # 邊界限制
-        if not (COOP_BOX_SIZE//2 <= tentative_pos.x <= SCREEN_WIDTH - COOP_BOX_SIZE//2 and
-                COOP_BOX_SIZE//2 <= tentative_pos.y <= SCREEN_HEIGHT - COOP_BOX_SIZE//2):
+                return
+        if not (self.collision_size//2 <= tentative_pos.x <= SCREEN_WIDTH - self.collision_size//2 and
+                self.collision_size//2 <= tentative_pos.y <= SCREEN_HEIGHT - self.collision_size//2):
             return
         self.pos = tentative_pos
         self.rect.center = self.pos
 
+    def draw(self, surface):
+        # 圖片中心要對齊碰撞rect中心
+        img_rect = self.image.get_rect(center=self.rect.center)
+        surface.blit(self.image, img_rect)
+#---地刺類別---
+class SpikeTrap(pygame.sprite.Sprite):
+    def __init__(self, x, y, width=40, height=40, out_time=1.0, in_time=1.5, phase_offset=0.0,
+                 img_out=None, img_in=None):
+        super().__init__()
+        self.rect = pygame.Rect(x, y, width, height)
+        self.out_time = out_time
+        self.in_time = in_time
+        self.cycle_time = self.out_time + self.in_time
+        self.timer = phase_offset
+        self.active = False
+
+        # 圖片讀取，地刺有無伸出狀態的圖片
+        self.img_out = img_out
+        self.img_in = img_in
+
+    #--- 讀取時間更新地刺狀態 ---
+    def update(self, dt):
+        self.timer += dt
+        phase = self.timer % self.cycle_time
+        self.active = phase < self.out_time
+
+    #回傳地刺狀態
+    def is_dangerous(self):
+        return self.active
+
+    #--- 繪製地刺 ---
+    def draw(self, surface):
+        if self.active and self.img_out:
+            img = pygame.transform.scale(self.img_out, (self.rect.width, self.rect.height))
+            surface.blit(img, self.rect)
+        elif not self.active and self.img_in:
+            img = pygame.transform.scale(self.img_in, (self.rect.width, self.rect.height))
+            surface.blit(img, self.rect)
+        else:
+            # 後備畫法
+            color = (220, 220, 220) if not self.active else (220, 40, 40)
+            pygame.draw.rect(surface, color, self.rect)
 # --- 關卡資料 ---
 levels_data = [
     {
@@ -339,7 +408,12 @@ levels_data = [
             (200, SCREEN_HEIGHT // 2 - 10, SCREEN_WIDTH // 2 - 200 - 10, 10),
             (SCREEN_WIDTH // 2 + 10, SCREEN_HEIGHT // 2 - 10, SCREEN_WIDTH // 2 - 20 - 10, 10),
         ],
-        "coop_box_start": (SCREEN_WIDTH // 4, SCREEN_HEIGHT // 4)
+        "coop_box_start": [(SCREEN_WIDTH // 4, SCREEN_HEIGHT // 4),(SCREEN_WIDTH // 4+50, SCREEN_HEIGHT // 4+50)],
+        "spike_traps": [
+                            (40, 40, 40, 40, 1.0, 2.0, 0.0),     # 1秒伸出/2秒縮回，立即開始
+                            (100, 40, 40, 40, 0.7, 1.5, 0.5),    # 0.7秒伸出/1.5秒縮回，起始延遲0.5秒
+                            (160, 40, 40, 40, 1.2, 1.0, 1.0),    # 1.2秒伸出/1秒縮回，起始延遲1秒
+        ]
     },
     {
         "player1_start": (50, 50),
@@ -367,6 +441,7 @@ laser_wall_sprites = pygame.sprite.Group()
 goal_sprites = pygame.sprite.Group()
 player_sprites = pygame.sprite.Group()
 coop_box_group = pygame.sprite.Group()
+spike_trap_group = pygame.sprite.Group()
 
 # --- 遊戲物件實體 ---
 player1 = Player(0, 0, PLAYER1_COLOR, PLAYER1_DEAD_COLOR,
@@ -403,9 +478,24 @@ def load_level(level_idx):
     goal2.is_active = False
     goal_sprites.add(goal1, goal2)
     # 箱子
-    coop_box.pos = pygame.math.Vector2(level["coop_box_start"])
-    coop_box.rect.center = coop_box.pos
+    coop_box_group.empty()
+    coop_box_starts = level["coop_box_start"]
+    if isinstance(coop_box_starts[0], (list, tuple)):
+        for pos in coop_box_starts:
+            box = CoopBox(*pos, img=box_img)
+            coop_box_group.add(box)
+    else:
+        box = CoopBox(*coop_box_starts, img=box_img)
+        coop_box_group.add(box)
     game_state = STATE_PLAYING
+    # 清空地刺群
+    spike_trap_group.empty()
+    # 依據關卡資料加入地刺
+    for spike_data in level.get("spike_traps", []):
+        # spike_data 只要是 (x, y, ...) tuple
+        spike_trap_group.add(
+            SpikeTrap(*spike_data, img_out=spike_trap_img_out, img_in=spike_trap_img_in)
+        )
 
 #---遊戲初始化---
 game_state = STATE_PLAYING
@@ -464,25 +554,27 @@ while running:
     #---遊戲狀態_遊玩中---
     if game_state == STATE_PLAYING:
         # 更新玩家位置
-        player1.update_movement(laser_wall_sprites, coop_box_group)
-        player2.update_movement(laser_wall_sprites, coop_box_group)
+        player1.update_movement(laser_wall_sprites, coop_box_group, spike_trap_group)
+        player2.update_movement(laser_wall_sprites, coop_box_group, spike_trap_group)
         # --- 推箱判斷 ---
-        keys = pygame.key.get_pressed()
-        p1_near = player1.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
-        p2_near = player2.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
-        if player1.is_alive and player2.is_alive and p1_near and p2_near:
-            dir_p1 = pygame.math.Vector2(
-                keys[player1.control_keys['right']] - keys[player1.control_keys['left']],
-                keys[player1.control_keys['down']] - keys[player1.control_keys['up']]
-            )
-            dir_p2 = pygame.math.Vector2(
-                keys[player2.control_keys['right']] - keys[player2.control_keys['left']],
-                keys[player2.control_keys['down']] - keys[player2.control_keys['up']]
-            )
-            total_dir = dir_p1 + dir_p2
-            if total_dir.length_squared() > 0:
-                total_dir.normalize_ip()
-                coop_box.move(total_dir, laser_wall_sprites)
+        if player1.is_alive and player2.is_alive:
+            for coop_box in coop_box_group:
+                p1_near = player1.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
+                p2_near = player2.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
+                if p1_near and p2_near:
+                    dir_p1 = pygame.math.Vector2(
+                        keys[player1.control_keys['right']] - keys[player1.control_keys['left']],
+                        keys[player1.control_keys['down']] - keys[player1.control_keys['up']]
+                    )
+                    dir_p2 = pygame.math.Vector2(
+                        keys[player2.control_keys['right']] - keys[player2.control_keys['left']],
+                        keys[player2.control_keys['down']] - keys[player2.control_keys['up']]
+                    )
+                    total_dir = dir_p1 + dir_p2
+                    if total_dir.length_squared() > 0:
+                        total_dir.normalize_ip()
+                        coop_box.move(total_dir, laser_wall_sprites)
+
         # --- 鎖鏈物理 ---
         for _ in range(CHAIN_ITERATIONS):
             if player1.is_alive and player2.is_alive:
@@ -527,16 +619,24 @@ while running:
     screen.fill(BLACK)
     laser_wall_sprites.draw(screen)
     goal_sprites.draw(screen)
-    coop_box_group.draw(screen)
+    for coop_box in coop_box_group:
+        coop_box.draw(screen)
 
     # 算有幾個角色在推範圍內，並在箱子顯示數字
-    p1_on_box = player1.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
-    p2_on_box = player2.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
-    num_on_box = int(p1_on_box) + int(p2_on_box)
-    if num_on_box > 0:
-        box_text = font_small.render(str(num_on_box), True, (0, 0, 0))
-        box_cx, box_cy = int(coop_box.rect.centerx), int(coop_box.rect.centery)
-        screen.blit(box_text, (box_cx - box_text.get_width() // 2, box_cy - box_text.get_height() // 2))
+    for coop_box in coop_box_group:
+        p1_on_box = player1.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
+        p2_on_box = player2.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
+        num_on_box = int(p1_on_box) + int(p2_on_box)
+        if num_on_box < 2:
+            box_text = font_small.render(str(2 - num_on_box), True, (255, 255, 255))
+            box_cx, box_cy = int(coop_box.rect.centerx), int(coop_box.rect.centery)
+            screen.blit(box_text, (box_cx - box_text.get_width() // 2, box_cy - box_text.get_height() // 2))
+
+    # 更新地刺狀態和繪製地刺
+    for spike in spike_trap_group:
+        spike.update(dt)
+        spike.draw(screen)
+
     # 繪製鎖鏈
     chain_start_pos = None
     chain_end_pos = None
