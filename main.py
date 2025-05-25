@@ -265,6 +265,8 @@ class Player(pygame.sprite.Sprite):
                 frame = self.walk_frames[0]
                 self.current_frame = 0  # 静止时重置帧索引
             else:
+                if self.current_frame >= len(self.idle_frames):
+                    self.current_frame = 0
                 self.frame_timer += 1 / FPS
                 # 闲置动画使用自己的帧间隔
                 if self.frame_timer >= self.idle_frame_interval:  # 使用 idle_frame_interval
