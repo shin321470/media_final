@@ -5,11 +5,9 @@ import math
 from animations import *
 import random  # Added for fruit/meteor spawning
 
-
-
 # --- 常數 ---
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
+SCREEN_WIDTH = 1080
+SCREEN_HEIGHT = 720
 FPS = 60
 
 # 顏色定義
@@ -336,15 +334,15 @@ class Player(pygame.sprite.Sprite):
         self.idle_frames = []
 
         if self.player_id == 0:
-            self.walk_frames = load_normal_player_walk_animation(target_width=PLAYER_RADIUS * 3,
-                                                                 target_height=PLAYER_RADIUS * 3)
+            self.walk_frames = load_knight_run_animation(target_width=PLAYER_RADIUS * 8,target_height=PLAYER_RADIUS * 8)
+            self.idle_frames = load_knight_idle_animation(target_width=PLAYER_RADIUS * 8,target_height=PLAYER_RADIUS * 8)
             self.is_witch = False
-            self.frame_interval = 0.2
+            self.frame_interval = 0.15
+            self.idle_frame_interval = 0.3
         elif self.player_id == 1:
             self.is_witch = True
             self.walk_frames = load_witch_run_animation(target_width=PLAYER_RADIUS * 4, target_height=PLAYER_RADIUS * 4)
-            self.idle_frames = load_witch_idle_animation(target_width=PLAYER_RADIUS * 4,
-                                                         target_height=PLAYER_RADIUS * 4)
+            self.idle_frames = load_witch_idle_animation(target_width=PLAYER_RADIUS * 4,target_height=PLAYER_RADIUS * 4)
             self.frame_interval = 0.15
             self.idle_frame_interval = 0.3
 
