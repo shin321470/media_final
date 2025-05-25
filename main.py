@@ -111,6 +111,9 @@ class Player(pygame.sprite.Sprite):
         self.control_keys = control_keys
         self.player_id = player_id
         self.facing_left = False
+        self.walk_frames = []
+        self.idle_frames = []
+
 
         # 載入動畫圖片
         # 根据 player_id 加载不同的动画
@@ -121,10 +124,13 @@ class Player(pygame.sprite.Sprite):
                                                                  target_height=PLAYER_RADIUS * 3)
             self.is_witch = False  # 确保不是女巫角色
             self.frame_interval = 0.2  # 普通玩家动画速度
-        elif self.player_id == 1:  # 玩家2
+        elif self.player_id == 1:
             self.is_witch = True
             self.walk_frames = load_witch_run_animation(target_width=PLAYER_RADIUS * 4, target_height=PLAYER_RADIUS * 4)
-            self.frame_interval = 0.15  # 女巫动画速度，可能更快
+            # 加载女巫闲置动画帧
+            self.idle_frames = load_witch_idle_animation(target_width=PLAYER_RADIUS * 4, target_height=PLAYER_RADIUS * 4)
+            self.frame_interval = 0.15
+            self.idle_frame_interval = 0.3  # 女巫动画速度，可能更快
 
         # 死亡狀態的圖片（黯淡版本）
         self.dead_frames = []
@@ -245,16 +251,26 @@ class Player(pygame.sprite.Sprite):
         elif keys[self.control_keys['right']]:
             self.facing_left = False
 
-        # 更新動畫幀
         if is_moving:
+            # 播放行走动画
             self.frame_timer += 1 / FPS
             if self.frame_timer >= self.frame_interval:
                 self.current_frame = (self.current_frame + 1) % len(self.walk_frames)
                 self.frame_timer = 0
             frame = self.walk_frames[self.current_frame]
         else:
-            frame = self.walk_frames[0]
-
+            # 播放闲置动画
+            # 确保有闲置帧，否则退回到行走的第一帧
+            if not self.idle_frames:
+                frame = self.walk_frames[0]
+                self.current_frame = 0  # 静止时重置帧索引
+            else:
+                self.frame_timer += 1 / FPS
+                # 闲置动画使用自己的帧间隔
+                if self.frame_timer >= self.idle_frame_interval:  # 使用 idle_frame_interval
+                    self.current_frame = (self.current_frame + 1) % len(self.idle_frames)
+                    self.frame_timer = 0
+                frame = self.idle_frames[self.current_frame]
         # 根據方向決定是否翻轉圖片
         if self.facing_left:
             frame = pygame.transform.flip(frame, True, False)  # 水平翻转

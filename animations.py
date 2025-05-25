@@ -66,25 +66,37 @@ def load_witch_idle_animation(target_width, target_height):
     Returns:
         list: 包含所有缩放后动画帧的列表。
     """
-    # 假设 B_witch_idle.png 也是一个垂直排列的精灵图集
-    # 请根据实际图片中帧的数量和排列方式调整以下参数
-    idle_sprite_sheet_path = "B_witch_idle.png"
+    idle_sprite_sheet_path = "./plays_animation_art/B_witch_idle.png"
+
     if not os.path.exists(idle_sprite_sheet_path):
-        raise FileNotFoundError(f"女巫闲置动画图片未找到: {idle_sprite_sheet_path}")
+        # 尝试从当前目录加载，以防路径问题
+        idle_sprite_sheet_path = "B_witch_idle.png"
+        if not os.path.exists(idle_sprite_sheet_path):
+            raise FileNotFoundError(f"女巫闲置动画图片未找到: {idle_sprite_sheet_path} 或 ./plays_animation_art/B_witch_idle.png")
 
     idle_sprite_sheet = pygame.image.load(idle_sprite_sheet_path).convert_alpha()
 
-    # 假设 B_witch_idle.png 有 8 帧，每帧等高
-    # 如果你的图片有不同数量的帧，请修改这里的 8
-    num_idle_frames = 8
+    # 根据您提供的 B_witch_idle.png 图片，它有 6 帧，而不是 8 帧。
+    # 每帧等高，并且图中的角色是完整的。
+    num_idle_frames = 6 # 修正：根据 B_witch_idle.png 实际帧数
     idle_frame_width = idle_sprite_sheet.get_width()
+    # 每帧的高度是整个图集的高度除以帧数
     idle_frame_height = idle_sprite_sheet.get_height() // num_idle_frames
 
     if idle_sprite_sheet.get_height() % num_idle_frames != 0:
         print(f"警告：B_witch_idle.png 的高度 {idle_sprite_sheet.get_height()} 不是帧数 {num_idle_frames} 的整数倍，可能导致切割不准确！")
+        # 考虑到可能存在轻微的误差，我们可以尝试向下取整，但这通常表示图片切割有问题
+        # 或者帧数设置不正确。如果这里有警告，请仔细检查图片。
 
     frames = []
     for i in range(num_idle_frames):
+        # subsurface 的参数是 (left, top, width, height)
+        # left: 总是 0，因为帧是垂直排列的
+        # top: i * idle_frame_height，这是当前帧的起始y坐标
+        # width: idle_frame_width，当前帧的宽度
+        # height: idle_frame_height，当前帧的高度
         frame = idle_sprite_sheet.subsurface((0, i * idle_frame_height, idle_frame_width, idle_frame_height))
-        frames.append(pygame.transform.smoothscale(frame, (target_width, target_height)))
+        # 使用 smoothscale 进行高质量缩放
+        scaled_frame = pygame.transform.smoothscale(frame, (target_width, target_height))
+        frames.append(scaled_frame)
     return frames
