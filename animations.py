@@ -35,32 +35,6 @@ def load_witch_run_animation(target_width, target_height):
         frames.append(pygame.transform.smoothscale(frame, (target_width, target_height)))
     return frames
 
-# 定义一个函数来加载并缩放普通玩家的行走动画
-def load_normal_player_walk_animation(target_width, target_height):
-    """
-    加载普通玩家的行走动画图片（walk1.png, walk2.png），并进行缩放。
-    Args:
-        target_width (int): 最终缩放后的图片宽度。
-        target_height (int): 最终缩放后的图片高度。
-    Returns:
-        list: 包含所有缩放后动画帧的列表。
-    """
-    walk1_path = "walk1.png"
-    walk2_path = "walk2.png"
-    if not os.path.exists(walk1_path) or not os.path.exists(walk2_path):
-        raise FileNotFoundError(f"普通玩家行走动画图片未找到: {walk1_path} 或 {walk2_path}")
-
-    original_frames = [
-        pygame.image.load(walk1_path).convert_alpha(),
-        pygame.image.load(walk2_path).convert_alpha()
-    ]
-
-    scaled_frames = [
-        pygame.transform.smoothscale(frame, (target_width, target_height))
-        for frame in original_frames
-    ]
-    return scaled_frames
-
 def load_witch_idle_animation(target_width, target_height):
     """
     加载女巫闲置动画的精灵图集，并将其切割为单独的帧。
