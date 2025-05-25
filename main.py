@@ -2,6 +2,8 @@ import pygame
 import cv2
 import numpy as np
 import math
+import random
+import time
 from animations import *
 
 # --- 常數 ---
@@ -41,6 +43,21 @@ COOP_BOX_PUSH_RADIUS = 50  # 玩家距離箱子多少以內才可推
 # 地刺參數
 SAFE_COLOR = (220, 220, 220)  # 縮回(安全) 淺灰色
 DANGER_COLOR = (220, 40, 40)  # 伸出(危險) 紅色
+
+# 果實相關常數
+FRUIT_RADIUS = 15
+FRUIT_EFFECT_DURATION = 30.0  # 30秒效果時間
+
+# 果實顏色
+MIRROR_FRUIT_COLOR = (255, 215, 0)     # 金色 - 鏡像操控
+INVISIBLE_WALL_COLOR = (138, 43, 226)  # 紫色 - 透明牆壁
+VOLCANO_FRUIT_COLOR = (255, 69, 0)     # 橙紅色 - 火山爆發
+
+# 火山效果相關常數
+METEOR_WARNING_TIME = 1.5  # 警告時間1.5秒
+METEOR_SIZE = 20
+METEOR_COLOR = (139, 69, 19)  # 棕色
+WARNING_COLOR = (255, 255, 0)  # 黃色警告
 
 # 遊戲狀態
 STATE_PLAYING = 0
@@ -171,23 +188,31 @@ class Player(pygame.sprite.Sprite):
         self.rect.center = self.pos
         self.image = self.walk_frames[0]
 
-    def update_movement(self, laser_walls, coop_boxes=None,spike_trap_group=None):
-        # 更新玩家位置
+    def update_movement(self, laser_walls, coop_boxes=None, spike_trap_group=None, effect_manager=None): # Added effect_manager
+        # Update player position
         if not self.is_alive:
             if self.death_pos:
                 self.pos = self.death_pos
                 self.rect.center = self.death_pos
-
-            # 如果玩家死亡，則使用死亡狀態的圖片
             self._update_dead_image()
             return
 
         keys = pygame.key.get_pressed()
         movement_vector = pygame.math.Vector2(0, 0)
-        if keys[self.control_keys['up']]: movement_vector.y = -1
-        if keys[self.control_keys['down']]: movement_vector.y = 1
-        if keys[self.control_keys['left']]: movement_vector.x = -1
-        if keys[self.control_keys['right']]: movement_vector.x = 1
+
+        # Check for mirror effect
+        mirror_active = effect_manager and effect_manager.is_mirror_active(self.player_id)
+
+        # Determine control keys based on mirror effect
+        up_key = self.control_keys['down'] if mirror_active else self.control_keys['up']
+        down_key = self.control_keys['up'] if mirror_active else self.control_keys['down']
+        left_key = self.control_keys['right'] if mirror_active else self.control_keys['left']
+        right_key = self.control_keys['left'] if mirror_active else self.control_keys['right']
+
+        if keys[up_key]: movement_vector.y = -1
+        if keys[down_key]: movement_vector.y = 1
+        if keys[left_key]: movement_vector.x = -1
+        if keys[right_key]: movement_vector.x = 1
 
         is_moving = movement_vector.length_squared() > 0
 
@@ -196,50 +221,64 @@ class Player(pygame.sprite.Sprite):
             movement_vector *= PLAYER_SPEED
 
         tentative_pos = self.pos + movement_vector
-
-        # 碰撞檢查
+        
+        # Store temp_rect_x and temp_rect_y for use in box collision as well
         temp_rect_x = self.rect.copy()
         temp_rect_x.centerx = tentative_pos.x
-        hit_laser_x = any(temp_rect_x.colliderect(lw.rect) for lw in laser_walls)
-
+        
         temp_rect_y = self.rect.copy()
         temp_rect_y.centery = tentative_pos.y
-        hit_laser_y = any(temp_rect_y.colliderect(lw.rect) for lw in laser_walls)
 
-        if hit_laser_x or hit_laser_y:
-            self.is_alive = False
-            self.death_pos = self.pos
-            self.pos = self.death_pos
-            # 立即更新死亡狀態的圖片
-            self._update_dead_image()
-            self.rect = self.image.get_rect(center=self.pos)
-            return
+        # Collision check - only if walls are visible
+        if not (effect_manager and effect_manager.are_walls_invisible()):
+            hit_laser_x = any(temp_rect_x.colliderect(lw.rect) for lw in laser_walls)
+            hit_laser_y = any(temp_rect_y.colliderect(lw.rect) for lw in laser_walls)
 
-        # 箱子碰撞
+            if hit_laser_x or hit_laser_y:
+                self.is_alive = False
+                self.death_pos = self.pos
+                # self.pos = self.death_pos # self.pos should remain where death occurred
+                self._update_dead_image()
+                self.rect = self.image.get_rect(center=self.pos) # Update rect to death_pos
+                return
+
+        # Box collision (using the already calculated temp_rect_x and temp_rect_y)
         if coop_boxes:
             for box in coop_boxes:
-                if temp_rect_x.colliderect(box.rect):
+                # Check collision with the player's intended horizontal move
+                test_rect_for_box_x = self.rect.copy()
+                test_rect_for_box_x.centerx = tentative_pos.x
+                if test_rect_for_box_x.colliderect(box.rect):
                     movement_vector.x = 0
+            
             for box in coop_boxes:
-                if temp_rect_y.colliderect(box.rect):
+                # Check collision with the player's intended vertical move
+                test_rect_for_box_y = self.rect.copy()
+                test_rect_for_box_y.centery = tentative_pos.y
+                if test_rect_for_box_y.colliderect(box.rect):
                     movement_vector.y = 0
-        #地刺碰撞
+        
+        # Spike trap collision
         if spike_trap_group:
             for spike in spike_trap_group:
-                if spike.is_dangerous() and self.rect.colliderect(spike.rect) and self.is_alive:
+                # Check collision with the player's current rect after potential adjustment from box collision
+                current_player_rect_for_spike = pygame.Rect(self.pos.x - self.rect.width / 2 + movement_vector.x, 
+                                                             self.pos.y - self.rect.height / 2 + movement_vector.y, 
+                                                             self.rect.width, self.rect.height)
+                if spike.is_dangerous() and current_player_rect_for_spike.colliderect(spike.rect) and self.is_alive:
                     self.is_alive = False
-                    self.death_pos = self.pos
+                    self.death_pos = self.pos # Death at current position before impact
                     self._update_dead_image()
                     self.rect = self.image.get_rect(center=self.pos)
-                    return  # 死掉就直接跳出
+                    return
 
-        # 更新位置
+        # Update position
         self.pos += movement_vector
-        self.pos.x = max(PLAYER_RADIUS, min(self.pos.x, SCREEN_WIDTH - PLAYER_RADIUS))
-        self.pos.y = max(PLAYER_RADIUS, min(self.pos.y, SCREEN_HEIGHT - PLAYER_RADIUS))
+        self.pos.x = max(self.rect.width / 2, min(self.pos.x, SCREEN_WIDTH - self.rect.width / 2)) # Use rect.width for boundary
+        self.pos.y = max(self.rect.height / 2, min(self.pos.y, SCREEN_HEIGHT - self.rect.height / 2)) # Use rect.height for boundary
         self.rect.center = self.pos
 
-        # 更新復活後圖片
+        # Update image (alive image)
         self._update_alive_image(is_moving)
 
     def _update_alive_image(self, is_moving):
@@ -419,6 +458,152 @@ class SpikeTrap(pygame.sprite.Sprite):
             # 後備畫法
             color = (220, 220, 220) if not self.active else (220, 40, 40)
             pygame.draw.rect(surface, color, self.rect)
+
+# --- 果實類別 ---
+class Fruit(pygame.sprite.Sprite):
+    def __init__(self, x, y, fruit_type):
+        super().__init__()
+        self.fruit_type = fruit_type  # "mirror", "invisible_wall", "volcano"
+        self.image = pygame.Surface([FRUIT_RADIUS * 2, FRUIT_RADIUS * 2])
+        self.image.set_colorkey((0, 0, 0))  # 設置透明色
+
+        # 根據果實類型設置顏色
+        if fruit_type == "mirror":
+            color = MIRROR_FRUIT_COLOR
+        elif fruit_type == "invisible_wall":
+            color = INVISIBLE_WALL_COLOR
+        elif fruit_type == "volcano":
+            color = VOLCANO_FRUIT_COLOR
+        else:
+            color = (255, 255, 255) # Default color if type is unknown
+
+        # 畫一個圓形果實
+        pygame.draw.circle(self.image, color, (FRUIT_RADIUS, FRUIT_RADIUS), FRUIT_RADIUS)
+        pygame.draw.circle(self.image, (255, 255, 255), (FRUIT_RADIUS, FRUIT_RADIUS), FRUIT_RADIUS, 2) # Outline
+
+        self.rect = self.image.get_rect(center=(x, y))
+
+# --- 流星類別 (火山爆發效果) ---
+class Meteor(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.image = pygame.Surface([METEOR_SIZE, METEOR_SIZE])
+        self.image.set_colorkey((0, 0, 0))
+        pygame.draw.circle(self.image, METEOR_COLOR, (METEOR_SIZE//2, METEOR_SIZE//2), METEOR_SIZE//2)
+        self.rect = self.image.get_rect(center=(x, y))
+        self.active = True # Might be useful later for animation or effects
+
+# --- 警告標記類別 ---
+class Warning(pygame.sprite.Sprite):
+    def __init__(self, x, y, duration): # duration is METEOR_WARNING_TIME
+        super().__init__()
+        self.image = pygame.Surface([METEOR_SIZE * 2, METEOR_SIZE * 2]) # Warning larger than meteor
+        self.image.set_colorkey((0, 0, 0)) # Transparent background
+        self.image.set_alpha(200) # Slightly transparent warning
+        
+        # Draw a circle for the warning sign
+        pygame.draw.circle(self.image, WARNING_COLOR, (METEOR_SIZE, METEOR_SIZE), METEOR_SIZE, 3) # Yellow circle, width 3
+        
+        self.rect = self.image.get_rect(center=(x, y))
+        self.duration = duration
+        self.timer = 0
+
+    def update(self, dt):
+        self.timer += dt
+        # Simple fade out or blink effect could be added here if desired
+        # For now, it just tracks time. The example had a math.sin for alpha, ensure math is imported if used.
+        # The user's code:
+        # alpha = int(128 + 127 * math.sin(self.timer * 10))
+        # self.image.set_alpha(alpha)
+        # Ensure math is imported if this is used. For simplicity, I'll keep the user's version.
+        # Make sure `import math` is at the top of main.py.
+        alpha = int(128 + 127 * math.sin(self.timer * 10)) # Requires math import
+        self.image.set_alpha(alpha)
+        return self.timer < self.duration
+
+# --- 效果管理器 ---
+class EffectManager:
+    def __init__(self):
+        self.effects = {
+            "mirror_p1": {"active": False, "timer": 0},
+            "mirror_p2": {"active": False, "timer": 0},
+            "invisible_wall": {"active": False, "timer": 0, "flash_timer": 0, "showing": False},
+            "volcano": {"active": False, "timer": 0, "meteor_timer": 0}
+        }
+
+    def apply_effect(self, effect_type, player_id=None):
+        if effect_type == "mirror":
+            if player_id == 0: # Assuming player_id 0 is P1
+                self.effects["mirror_p1"]["active"] = True
+                self.effects["mirror_p1"]["timer"] = FRUIT_EFFECT_DURATION
+            elif player_id == 1: # Assuming player_id 1 is P2
+                self.effects["mirror_p2"]["active"] = True
+                self.effects["mirror_p2"]["timer"] = FRUIT_EFFECT_DURATION
+        elif effect_type == "invisible_wall":
+            self.effects["invisible_wall"]["active"] = True
+            self.effects["invisible_wall"]["timer"] = FRUIT_EFFECT_DURATION
+            self.effects["invisible_wall"]["flash_timer"] = 0 # Time until next flash state change
+            self.effects["invisible_wall"]["showing"] = False # Currently not showing
+        elif effect_type == "volcano":
+            self.effects["volcano"]["active"] = True
+            self.effects["volcano"]["timer"] = FRUIT_EFFECT_DURATION
+            self.effects["volcano"]["meteor_timer"] = 0 # Time until next meteor spawn check
+
+    def update(self, dt):
+        # Update mirror effect
+        for key in ["mirror_p1", "mirror_p2"]:
+            if self.effects[key]["active"]:
+                self.effects[key]["timer"] -= dt
+                if self.effects[key]["timer"] <= 0:
+                    self.effects[key]["active"] = False
+
+        # Update invisible wall effect
+        if self.effects["invisible_wall"]["active"]:
+            self.effects["invisible_wall"]["timer"] -= dt
+            self.effects["invisible_wall"]["flash_timer"] += dt
+
+            # Wall flashes visible for 1s every 5s (4s invisible, 1s visible cycle)
+            if self.effects["invisible_wall"]["flash_timer"] >= 5.0: # End of 5s cycle
+                self.effects["invisible_wall"]["showing"] = True # Start showing
+                self.effects["invisible_wall"]["flash_timer"] = 0 # Reset cycle timer
+            elif self.effects["invisible_wall"]["flash_timer"] >= 1.0 and self.effects["invisible_wall"]["showing"]:
+                self.effects["invisible_wall"]["showing"] = False # Stop showing after 1s
+
+            if self.effects["invisible_wall"]["timer"] <= 0: # Effect duration ended
+                self.effects["invisible_wall"]["active"] = False
+                self.effects["invisible_wall"]["showing"] = False # Ensure it's not stuck showing
+
+        # Update volcano effect
+        if self.effects["volcano"]["active"]:
+            self.effects["volcano"]["timer"] -= dt
+            self.effects["volcano"]["meteor_timer"] += dt # Time accumulating for meteor spawn
+            if self.effects["volcano"]["timer"] <= 0:
+                self.effects["volcano"]["active"] = False
+
+    def is_mirror_active(self, player_id):
+        if player_id == 0:
+            return self.effects["mirror_p1"]["active"]
+        elif player_id == 1:
+            return self.effects["mirror_p2"]["active"]
+        return False
+
+    def are_walls_invisible(self):
+        # Walls are invisible if effect is active AND they are not in their "showing" phase
+        return self.effects["invisible_wall"]["active"] and not self.effects["invisible_wall"]["showing"]
+
+    def should_spawn_meteor(self):
+        # Spawn meteor if volcano effect is active and meteor_timer has exceeded a random interval
+        # The random interval was given as random.uniform(1.0, 3.0) in user's text.
+        # This check should ideally be done in the main game loop, and then reset_meteor_timer called.
+        if self.effects["volcano"]["active"]:
+            # The actual check for meteor_timer >= random.uniform(1.0, 3.0) will be done in the main loop.
+            # This method just indicates if the volcano effect is generally active for spawning.
+            return self.effects["volcano"]["active"] 
+        return False
+
+    def reset_meteor_timer(self):
+        # Reset after a meteor spawn decision has been made
+        self.effects["volcano"]["meteor_timer"] = 0
 # --- 關卡資料 ---
 levels_data = [
     {
@@ -456,6 +641,30 @@ levels_data = [
         "coop_box_start": (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
     }
 ]
+
+# 在關卡資料中添加果實位置
+def add_fruits_to_levels():
+    # 為第一關添加果實
+    if len(levels_data) > 0:
+        levels_data[0]["fruits"] = [
+            (300, 300, "mirror"),
+            (500, 200, "invisible_wall"),
+            (400, 400, "volcano")
+        ]
+    else:
+        print("Warning: levels_data is empty or too short to add fruits to level 0.")
+
+    # 為第二關添加果實
+    if len(levels_data) > 1:
+        levels_data[1]["fruits"] = [
+            (200, 300, "mirror"),
+            (600, 400, "volcano"),
+            (400, 150, "invisible_wall")
+        ]
+    else:
+        print("Warning: levels_data does not have a level 1 to add fruits to.")
+
+add_fruits_to_levels()
 current_level_index = 0
 
 # --- 遊戲物件群組 ---
@@ -465,6 +674,9 @@ goal_sprites = pygame.sprite.Group()
 player_sprites = pygame.sprite.Group()
 coop_box_group = pygame.sprite.Group()
 spike_trap_group = pygame.sprite.Group()
+fruit_sprites = pygame.sprite.Group()
+meteor_sprites = pygame.sprite.Group()
+warning_sprites = pygame.sprite.Group()
 
 # --- 遊戲物件實體 ---
 player1 = Player(0, 0, PLAYER1_COLOR, PLAYER1_DEAD_COLOR,
@@ -479,6 +691,8 @@ goal2 = Goal(0, 0, GOAL_P2_COLOR, 1)
 coop_box = CoopBox(0, 0)
 coop_box_group.add(coop_box)
 
+effect_manager = EffectManager()
+
 # 將所有物件加入群組
 def load_level(level_idx):
     global game_state
@@ -488,6 +702,9 @@ def load_level(level_idx):
     level = levels_data[level_idx]
     laser_wall_sprites.empty()
     goal_sprites.empty()
+    fruit_sprites.empty()
+    meteor_sprites.empty()
+    warning_sprites.empty()
     player1.start_pos = pygame.math.Vector2(level["player1_start"])
     player2.start_pos = pygame.math.Vector2(level["player2_start"])
     player1.reset()
@@ -519,6 +736,15 @@ def load_level(level_idx):
         spike_trap_group.add(
             SpikeTrap(*spike_data, img_out=spike_trap_img_out, img_in=spike_trap_img_in)
         )
+    # Load fruits for the level
+    if "fruits" in level: # Check if fruit data exists for this level
+        for fruit_data in level["fruits"]:
+            fx, fy, ftype = fruit_data
+            new_fruit = Fruit(fx, fy, ftype)
+            fruit_sprites.add(new_fruit)
+            # If you have a main 'all_sprites' group that's used for drawing everything, add to it too:
+            # all_sprites.add(new_fruit) 
+            # For now, assuming fruit_sprites will be drawn independently.
 
 #---遊戲初始化---
 game_state = STATE_PLAYING
@@ -565,6 +791,7 @@ def draw_game_state_messages():
 #---遊戲主程式循環---
 while running:
     dt = clock.tick(FPS) / 1000.0
+    effect_manager.update(dt) # Update effect manager each frame
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -577,8 +804,23 @@ while running:
     #---遊戲狀態_遊玩中---
     if game_state == STATE_PLAYING:
         # 更新玩家位置
-        player1.update_movement(laser_wall_sprites, coop_box_group, spike_trap_group)
-        player2.update_movement(laser_wall_sprites, coop_box_group, spike_trap_group)
+        player1.update_movement(laser_wall_sprites, coop_box_group, spike_trap_group, effect_manager)
+        player2.update_movement(laser_wall_sprites, coop_box_group, spike_trap_group, effect_manager)
+        
+        # --- Fruit Collection ---
+        for fruit in list(fruit_sprites): # Iterate over a copy if modifying the group
+            # Check collision with Player 1
+            if player1.is_alive and pygame.sprite.collide_rect(player1, fruit): # Or use collide_mask if more precise
+                effect_manager.apply_effect(fruit.fruit_type, player1.player_id)
+                fruit.kill() # Remove fruit from all groups
+                # Potentially add a sound effect or visual feedback here
+
+            # Check collision with Player 2 (only if not already collected by P1)
+            elif player2.is_alive and pygame.sprite.collide_rect(player2, fruit): # Or use collide_mask
+                effect_manager.apply_effect(fruit.fruit_type, player2.player_id)
+                fruit.kill() # Remove fruit
+                # Potentially add a sound effect or visual feedback here
+
         # --- 推箱判斷 ---
         if player1.is_alive and player2.is_alive:
             for coop_box in coop_box_group:
@@ -637,28 +879,96 @@ while running:
         if not player1.is_alive and not player2.is_alive:
             game_state = STATE_GAME_OVER
 
+        # --- Volcano Effect: Meteor Spawning and Warnings ---
+        # Check if volcano effect is active and it's time to spawn a new meteor warning
+        if effect_manager.effects["volcano"]["active"] and \
+           effect_manager.effects["volcano"]["meteor_timer"] >= random.uniform(1.5, 3.5): # Random spawn interval (e.g. 1.5-3.5s)
+            
+            # Determine meteor landing position (random X, bottom of screen)
+            meteor_target_x = random.randint(METEOR_SIZE // 2, SCREEN_WIDTH - METEOR_SIZE // 2)
+            meteor_target_y = SCREEN_HEIGHT - METEOR_SIZE // 2 # Land at the very bottom
+
+            # Create a warning at the target location
+            # The Warning class's duration argument is METEOR_WARNING_TIME
+            new_warning = Warning(meteor_target_x, meteor_target_y, METEOR_WARNING_TIME)
+            warning_sprites.add(new_warning)
+            # all_sprites.add(new_warning) # If all_sprites is used for drawing everything
+
+            effect_manager.reset_meteor_timer() # Reset timer for next spawn
+
+        # Update warnings
+        for warning in list(warning_sprites): # Iterate over a copy
+            if not warning.update(dt): # update returns False if duration is over
+                # Warning time is over, spawn meteor
+                # Meteor appears at the same spot the warning was
+                meteor_x, meteor_y = warning.rect.centerx, warning.rect.centery 
+                new_meteor = Meteor(meteor_x, meteor_y)
+                meteor_sprites.add(new_meteor)
+                # all_sprites.add(new_meteor) # If all_sprites is used for drawing
+
+                warning.kill() # Remove the warning
+
+        # Update meteors and check for player collisions
+        for meteor in list(meteor_sprites): # Iterate over a copy
+            # Meteors are currently static once they appear.
+            player1_hit_by_meteor = False
+            player2_hit_by_meteor = False
+
+            # Check collision with Player 1
+            if player1.is_alive and pygame.sprite.collide_rect(player1, meteor):
+                player1.is_alive = False
+                player1.death_pos = pygame.math.Vector2(player1.pos.x, player1.pos.y) # Store current pos as death_pos
+                player1.pos = player1.death_pos # Ensure player pos is fixed at death_pos
+                player1._update_dead_image()
+                player1.rect.center = player1.pos # Update rect to death_pos
+                player1_hit_by_meteor = True
+
+            # Check collision with Player 2
+            if player2.is_alive and pygame.sprite.collide_rect(player2, meteor):
+                player2.is_alive = False
+                player2.death_pos = pygame.math.Vector2(player2.pos.x, player2.pos.y)
+                player2.pos = player2.death_pos
+                player2._update_dead_image()
+                player2.rect.center = player2.pos
+                player2_hit_by_meteor = True
+            
+            if player1_hit_by_meteor or player2_hit_by_meteor:
+                 if meteor.active: # meteor.active is True by default in its constructor
+                    meteor.kill() # Remove meteor after impact
+
     #---遊戲畫面繪製---
     show_opencv_paint_window()
     screen.fill(BLACK)
-    laser_wall_sprites.draw(screen)
+
+    # Conditionally draw laser walls
+    if not effect_manager.are_walls_invisible():
+        laser_wall_sprites.draw(screen)
+        
     goal_sprites.draw(screen)
     for coop_box in coop_box_group:
         coop_box.draw(screen)
 
     # 算有幾個角色在推範圍內，並在箱子顯示數字
+    # This logic seems fine, it's UI related to coop_box, not drawing the box itself again.
     for coop_box in coop_box_group:
         p1_on_box = player1.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
         p2_on_box = player2.pos.distance_to(coop_box.pos) < COOP_BOX_PUSH_RADIUS
         num_on_box = int(p1_on_box) + int(p2_on_box)
-        if num_on_box < 2:
+        if num_on_box < 2: # Only draw if less than 2 players are on the box
             box_text = font_small.render(str(2 - num_on_box), True, (255, 255, 255))
             box_cx, box_cy = int(coop_box.rect.centerx), int(coop_box.rect.centery)
             screen.blit(box_text, (box_cx - box_text.get_width() // 2, box_cy - box_text.get_height() // 2))
-
-    # 更新地刺狀態和繪製地刺
+            
+    # 更新地刺狀態和繪製地刺 (SpikeTrap.update is called in game logic section, draw is here)
     for spike in spike_trap_group:
-        spike.update(dt)
+        # spike.update(dt) # This call is in the game logic section now.
         spike.draw(screen)
+
+    # --- Add drawing for new elements ---
+    fruit_sprites.draw(screen)
+    warning_sprites.draw(screen) 
+    meteor_sprites.draw(screen)
+    # --- End of new element drawing ---
 
     # 繪製鎖鏈
     chain_start_pos = None
