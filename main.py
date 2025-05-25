@@ -2,6 +2,7 @@ import pygame
 import cv2
 import numpy as np
 import math
+from animations import *
 
 # --- 常數 ---
 SCREEN_WIDTH = 800
@@ -112,14 +113,18 @@ class Player(pygame.sprite.Sprite):
         self.facing_left = False
 
         # 載入動畫圖片
-        original_frames = [
-            pygame.image.load("walk1.png").convert_alpha(),
-            pygame.image.load("walk2.png").convert_alpha()
-        ]
-        self.walk_frames = [
-            pygame.transform.smoothscale(frame, (PLAYER_RADIUS * 3, PLAYER_RADIUS * 3))
-            for frame in original_frames
-        ]
+        # 根据 player_id 加载不同的动画
+        if self.player_id == 0:  # 玩家1
+            # 玩家图片放大两倍
+            # 我们希望最终图片尺寸是 PLAYER_RADIUS * 6
+            self.walk_frames = load_normal_player_walk_animation(target_width=PLAYER_RADIUS * 3,
+                                                                 target_height=PLAYER_RADIUS * 3)
+            self.is_witch = False  # 确保不是女巫角色
+            self.frame_interval = 0.2  # 普通玩家动画速度
+        elif self.player_id == 1:  # 玩家2
+            self.is_witch = True
+            self.walk_frames = load_witch_run_animation(target_width=PLAYER_RADIUS * 4, target_height=PLAYER_RADIUS * 4)
+            self.frame_interval = 0.15  # 女巫动画速度，可能更快
 
         # 死亡狀態的圖片（黯淡版本）
         self.dead_frames = []
